@@ -1,0 +1,291 @@
+;****************************************************************************************************************************************************
+;*	helloworld.z80 - Hello World Source Code
+;*
+;****************************************************************************************************************************************************
+;*
+;*
+;****************************************************************************************************************************************************
+
+;****************************************************************************************************************************************************
+;*	Includes
+;****************************************************************************************************************************************************
+	
+	INCLUDE "inc/hardware.inc"
+	INCLUDE "inc/tiles.inc"
+
+;****************************************************************************************************************************************************
+;*	user data (constants)
+;****************************************************************************************************************************************************
+
+
+;****************************************************************************************************************************************************
+;*	equates
+;****************************************************************************************************************************************************
+
+_SPR0_Y		EQU 	_OAMRAM 	; sprite Y (byte 1 of sprite mem)
+_SPR0_X 	EQU 	_OAMRAM+1	; sprite X (byte 2 of sprite mem)
+_SPR0_NUM	EQU 	_OAMRAM+2   ; sprite num (byte 3 of sprite mem) 	
+_SPR0_ATT 	EQU 	_OAMRAM+3   ; sprite att (byte 4 of sprite mem)
+
+_DIR_Y		EQU 	_RAM 		; move y stored in WRAM
+_DIR_X		EQU 	_RAM+1 		; move x stored in WRAM
+
+;****************************************************************************************************************************************************
+;*	cartridge header
+;****************************************************************************************************************************************************
+
+	SECTION	"Org $00",ROM0[$00]
+RST_00:	
+	jp	$100
+
+	SECTION	"Org $08",ROM0[$08]
+RST_08:	
+	jp	$100
+
+	SECTION	"Org $10",ROM0[$10]
+RST_10:
+	jp	$100
+
+	SECTION	"Org $18",ROM0[$18]
+RST_18:
+	jp	$100
+
+	SECTION	"Org $20",ROM0[$20]
+RST_20:
+	jp	$100
+
+	SECTION	"Org $28",ROM0[$28]
+RST_28:
+	jp	$100
+
+	SECTION	"Org $30",ROM0[$30]
+RST_30:
+	jp	$100
+
+	SECTION	"Org $38",ROM0[$38]
+RST_38:
+	jp	$100
+
+	SECTION	"V-Blank IRQ Vector",ROM0[$40]
+VBL_VECT:
+	reti
+	
+	SECTION	"LCD IRQ Vector",ROM0[$48]
+LCD_VECT:
+	reti
+
+	SECTION	"Timer IRQ Vector",ROM0[$50]
+TIMER_VECT:
+	reti
+
+	SECTION	"Serial IRQ Vector",ROM0[$58]
+SERIAL_VECT:
+	reti
+
+	SECTION	"Joypad IRQ Vector",ROM0[$60]
+JOYPAD_VECT:
+	reti
+	
+	SECTION	"Start",ROM0[$100]
+	nop
+	jp	Start
+
+	; $0104-$0133 (Nintendo logo - do _not_ modify the logo data here or the GB will not run the program)
+	NINTENDO_LOGO
+
+	; $0134-$013E (Game title - up to 11 upper case ASCII characters; pad with $00)
+	DB	"HELLOSPRITE"
+		;0123456789A
+
+	; $013F-$0142 (Product code - 4 ASCII characters, assigned by Nintendo, just leave blank)
+	DB	"    "
+		;0123
+
+	; $0143 (Color GameBoy compatibility code)
+	DB	$00	; $00 - DMG 
+			; $80 - DMG/GBC
+			; $C0 - GBC Only cartridge
+
+	; $0144 (High-nibble of license code - normally $00 if $014B != $33)
+	DB	$00
+
+	; $0145 (Low-nibble of license code - normally $00 if $014B != $33)
+	DB	$00
+
+	; $0146 (GameBoy/Super GameBoy indicator)
+	DB	$00	; $00 - GameBoy
+
+	; $0147 (Cartridge type - all Color GameBoy cartridges are at least $19)
+	DB	$00	; $19 - ROM + MBC5
+
+	; $0148 (ROM size)
+	DB	$00	; $01 - 512Kbit = 64Kbyte = 4 banks
+
+	; $0149 (RAM size)
+	DB	$00	; $00 - None
+
+	; $014A (Destination code)
+	DB	$00	; $01 - All others
+			; $00 - Japan
+
+	; $014B (Licensee code - this _must_ be $33)
+	DB	$33	; $33 - Check $0144/$0145 for Licensee code.
+
+	; $014C (Mask ROM version - handled by RGBFIX)
+	DB	$00
+
+	; $014D (Complement check - handled by RGBFIX)
+	DB	$00
+
+	; $014E-$014F (Cartridge checksum - handled by RGBFIX)
+	DW	$00
+
+
+;****************************************************************************************************************************************************
+;*	Program Start
+;****************************************************************************************************************************************************
+
+	SECTION "Program Start",ROM0[$0150]
+Start::
+	nop
+	di 							; disable interrupts
+	ld 		sp, $FFFF			; set the stack pointer to $FFF
+Init::
+	ld 		a, %11100100		; standard palette;
+	ldh 	[rBGP], a  			; set BG palette
+	ldh		[rOBP0], a 			; set sprite 0 palette 
+	ld 		a, 0				;
+	ld 		[rSCX], a 			; reset scroll X
+	ld 		[rSCY], a 			; reset scroll Y
+	call 	Turn_Off_LCD		; wait for v-blank
+	call 	Clear_Map			; clear the tilemap
+	call 	Clear_OAM 			; clear the OAM memory
+	call 	Load_Tiles			; load our tiles
+	call 	Load_Sprite			; load our sprite
+	; configure display 
+	ld 		a, LCDCF_ON|LCDCF_BG8000|LCDCF_BG9800|LCDCF_BGON|LCDCF_OBJ8|LCDCF_OBJON  		
+	ldh 	[rLCDC], a 
+
+	ld 		a, 1
+	ld  	[_DIR_Y], a
+	ld 		[_DIR_X], a  
+
+Loop::
+	ld 		a, [rLY]			; get current horizontal scanline
+	cp 		$91			    	; is LY == 145 (144 + 1 which is number of horizontal scanlines on GB)?
+	jr 		nz, Loop  			; loop while LY != 145
+
+	; increment y pos 
+	ld 		a, [_SPR0_Y]		; load current Y pos (val) of sprite
+	ld 		hl, _DIR_Y 			; point hl to our curr Y direction
+	add 	a, [hl] 			; add dir to our pos 
+	ld 		hl, _SPR0_Y 		; save pointer to _SPR0_Y in hl
+	ld 		[hl], a 			; save new position in _SPR0_Y
+	; see if we should change the direction
+	cp 		152 				; 
+	jr 		z, Dec_Y 			; if we are at Y pos 152 change direction to negative
+	cp 		16 					;
+	jr 		z, Inc_Y  			; else if we are at Y pos 16 change direction to positive
+	jr 		End_Y 				; else don't change direction 
+Dec_Y::
+	ld 		a, -1 				;
+	ld 		[_DIR_Y], a 		; save our new Y direction 
+	jr 		End_Y				; we're done
+Inc_Y::
+	ld 		a, 1 				;
+	ld 		[_DIR_Y], a 		; save our new Y direction
+End_Y::
+	ld 		a, [_SPR0_X]		; load current X pos (val) of sprite
+	ld 		hl, _DIR_X			; point hl to our curr X direction
+	add 	a, [hl] 			; add dir to our pos 
+	ld 		hl, _SPR0_X 		; save pointer to _SPR0_X in hl
+	ld 		[hl], a 			; save new position in _SPR0_X
+	; see if we should change the direction
+	cp 		160 				; 
+	jr 		z, Dec_X 			; if we are at X pos 160 change direction to negative
+	cp 		8 					;
+	jr 		z, Inc_X  			; else if we are at X pos 8 change direction to positive
+	jr 		End_X 				; else don't change direction 
+Dec_X::
+	ld 		a, -1 				;
+	ld 		[_DIR_X], a 		; save our new Y direction 
+	jr 		End_X				; we're done
+Inc_X::
+	ld 		a, 1 				;
+	ld 		[_DIR_X], a 		; save our new Y direction
+End_X::
+	call 	Delay
+	jr 		Loop
+
+	SECTION "Helper Subroutines",ROM0
+Delay::
+	ld 		de, 2000 			; num loops
+Delay_Loop::
+	dec 	de 					; countdown 
+	; if d OR e == 0
+	ld  	a, d 					
+	or  	e 						
+	ret 	z
+	nop 						; otherwise delay 
+	jr 		Delay_Loop 			; and loop 
+
+Turn_Off_LCD::
+	ld 		a, [rLCDC]
+	rlca 						; Set high bit in rLCDC to carry flag
+	ret 	nc					; return if the LCD is already off, otherwise start V-Blank loop
+Wait_VBlank::
+	ld 		a, [rLY]			; get current horizontal scanline
+	cp 		$91			    	; is LY == 145 (144 + 1 which is number of horizontal scanlines on GB)?
+	jr 		nz, Wait_VBlank  	; loop while LY != 145
+	; In V-Blank
+	ld 		a, [rLCDC]  		; turn off LCD by setting LCDC register
+	res 	7, a 				; reset high bit (LCD on/off bit)
+	ld 		[rLCDC], a 			; Write that to actually turn it off
+	ret 
+
+Clear_Map::
+	ld 		hl, _SCRN0		    ; load the tilemap addr into hl
+	ld 		bc, 32*32		    ; setup a counter for our clear loop
+Clear_Map_Loop::
+	ld 		a, 0				; ld a with 0
+	ld 		[hl+], a 			; write 0 to addr in HL
+	dec 	bc					; decrement the counter
+	ld 		a, b 				; load b into a (for or)
+	or 		c 					; if B or C != 0
+	jr 		nz, Clear_Map_Loop 	; loop if B or C != 0
+	ret
+
+Clear_OAM::
+	ld 		hl, _OAMRAM			; load the sprite att table addr into hl
+	ld 		b, 160 				; setup counter for our clear loop
+Clear_OAM_Loop::
+	ld 		a, 0				;
+	ld 		[hl+], a 			; clear current byte then increment the addr 
+	dec 	b 					; dec b
+	jr 		nz, Clear_OAM_Loop  ; if b != 0 then loop
+	ret 						
+
+Load_Tiles::
+	ld 		hl, Tiles 			; load our tile addr into hl
+	ld 		b, TilesEnd-Tiles	; load num bytes to write
+	ld 		de, _VRAM  			; VRAM addr into de 		
+Load_Tiles_Loop::
+	ld 		a, [hl]				; load tile data into a
+	ld 		[de], a 			; then write that tile into VRAM
+	dec 	b 					; dec our byte counter
+	ret 	z 					; if we are done writing return
+	inc 	hl 					; inc the tile data pointer
+	inc 	de 					; inc VRAM pointer
+	jr		Load_Tiles_Loop 	; loop
+
+Load_Sprite::
+	ld 		a, 30 				; 
+	ld 		[_SPR0_Y], a 		; load 30 into spr0 Y
+	ld 		[_SPR0_X], a 		; load 30 into spr0 X
+	ld 		a, 1 				; 
+	ld 		[_SPR0_NUM], a 		; load tilenum into spr0 tilenum
+	ld 		a, 0				; 
+	ld 		[_SPR0_ATT], a 		; clear spr0 att
+	ret
+
+;*** End Of File ***
